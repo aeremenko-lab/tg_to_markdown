@@ -1,0 +1,15 @@
+# Outputs / generated data
+result.json
+test_result.json
+telegram_cleaned.md
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Env / secrets
+.env
+
+# work in progress
+docs/
