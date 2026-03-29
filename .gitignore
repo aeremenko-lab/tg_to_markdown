@@ -1,6 +1,5 @@
 # Outputs / generated data
-result.json
-test_result.json
+*.json
 telegram_cleaned.md
 
 # Python
