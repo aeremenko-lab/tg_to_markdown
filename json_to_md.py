@@ -1,8 +1,10 @@
 import argparse
 import json
 import re
+import shutil
 import sys
 from collections import defaultdict
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
@@ -138,6 +140,86 @@ def print_report(text: str) -> None:
     sys.stdout.buffer.write(payload)
 
 
+def load_ignore_tokens(path: Path) -> list[str]:
+    if not path.exists():
+        return []
+
+    tokens: list[str] = []
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        tokens.append(line.lower())
+    return tokens
+
+
+def get_sender_display(msg: dict[str, Any]) -> str:
+    return msg.get("from") or msg.get("actor") or "Channel"
+
+
+def get_sender_tokens(msg: dict[str, Any]) -> list[str]:
+    values = [
+        msg.get("from"),
+        msg.get("actor"),
+        msg.get("from_id"),
+        msg.get("actor_id"),
+    ]
+    tokens = [value.strip().lower() for value in values if isinstance(value, str) and value.strip()]
+    return list(dict.fromkeys(tokens))
+
+
+def sender_is_ignored(msg: dict[str, Any], ignore_tokens: list[str]) -> bool:
+    if not ignore_tokens:
+        return False
+    sender_tokens = get_sender_tokens(msg)
+    return any(ignore_token in sender_token for ignore_token in ignore_tokens for sender_token in sender_tokens)
+
+
+def build_ignored_breakdown_lines(ignored_by_sender: dict[str, int]) -> list[str]:
+    if not ignored_by_sender:
+        return ["ignored by sender: none"]
+
+    ordered = sorted(ignored_by_sender.items(), key=lambda item: (-item[1], item[0].lower()))
+    return ["ignored by sender:"] + [f"  {sender} = {count}" for sender, count in ordered]
+
+
+def choose_export_directory(base_parent: Path, now: Optional[datetime] = None) -> Path:
+    timestamp = now or datetime.now()
+    date_prefix = timestamp.strftime("%Y-%m_%d")
+
+    existing_indices: set[int] = set()
+    pattern = re.compile(rf"^{re.escape(date_prefix)}-(\d+)$")
+    for entry in base_parent.iterdir():
+        if not entry.is_dir():
+            continue
+        match = pattern.match(entry.name)
+        if not match:
+            continue
+        existing_indices.add(int(match.group(1)))
+
+    next_index = 1
+    while next_index in existing_indices:
+        next_index += 1
+
+    export_dir_name = f"{date_prefix}-{next_index:02d}"
+    export_dir = base_parent / export_dir_name
+    export_dir.mkdir(parents=True, exist_ok=False)
+    return export_dir
+
+
+def maybe_move_input_json(input_path: Path, export_dir: Path, enabled: bool) -> Optional[Path]:
+    if not enabled:
+        return None
+
+    src = input_path.resolve()
+    dest = (export_dir / input_path.name).resolve()
+    if src == dest:
+        return dest
+
+    shutil.move(str(src), str(dest))
+    return dest
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Convert Telegram JSON export to cleaned Markdown (preserve links only)."
@@ -155,10 +237,20 @@ def main() -> int:
         default="short",
         help='Use "short" for YYYY-MM-DD, "full" for the original timestamp',
     )
+    parser.add_argument(
+        "--move-json",
+        action="store_true",
+        help="Move input JSON to the created export directory after successful conversion",
+    )
 
     args = parser.parse_args()
     input_path = Path(args.input)
     output_path = Path(args.output)
+    output_parent = output_path.parent if output_path.parent != Path("") else Path(".")
+    export_dir = choose_export_directory(output_parent)
+    output_path = export_dir / output_path.name
+    ignore_senders_path = Path("ignore_senders.txt")
+    ignore_tokens = load_ignore_tokens(ignore_senders_path)
 
     data = json.loads(input_path.read_text(encoding="utf-8"))
 
@@ -169,6 +261,8 @@ def main() -> int:
 
     total_type_message = 0
     skipped_no_text = 0
+    skipped_ignored = 0
+    ignored_by_sender: dict[str, int] = defaultdict(int)
     min_date_raw: Optional[str] = None
     max_date_raw: Optional[str] = None
 
@@ -179,6 +273,12 @@ def main() -> int:
                 continue
 
             total_type_message += 1
+            sender_display = get_sender_display(msg)
+            if sender_is_ignored(msg, ignore_tokens):
+                skipped_ignored += 1
+                ignored_by_sender[sender_display] += 1
+                continue
+
             text = extract_text(msg)
             if not text:
                 skipped_no_text += 1
@@ -197,6 +297,7 @@ def main() -> int:
             date_range = f"{min_date_raw[:10]} .. {max_date_raw[:10]}"
         else:
             date_range = "N/A"
+        moved_json_path = maybe_move_input_json(input_path, export_dir, args.move_json)
 
         print_report(
             "\n".join(
@@ -206,9 +307,14 @@ def main() -> int:
                     f"messages in export file = {total_in_export}",
                     f"  ...with type==message = {total_type_message}",
                     f"written to .md = {len(lines)}",
+                    f"skipped_ignored = {skipped_ignored}",
                     f"skipped_no_text = {skipped_no_text}",
                     f"date range = {date_range}",
+                    f"ignore rules loaded = {len(ignore_tokens)} ({ignore_senders_path})",
+                    f"export directory = {export_dir}",
+                    f"moved json = {moved_json_path if moved_json_path else 'no'}",
                 ]
+                + [""] + build_ignored_breakdown_lines(ignored_by_sender)
             )
         )
         return 0
@@ -230,6 +336,12 @@ def main() -> int:
             continue
 
         total_type_message += 1
+        sender_display = get_sender_display(msg)
+        if sender_is_ignored(msg, ignore_tokens):
+            skipped_ignored += 1
+            ignored_by_sender[sender_display] += 1
+            continue
+
         text = extract_text(msg)
         if not text:
             skipped_no_text += 1
@@ -259,6 +371,7 @@ def main() -> int:
         date_range = f"{min_date_raw[:10]} .. {max_date_raw[:10]}"
     else:
         date_range = "N/A"
+    moved_json_path = maybe_move_input_json(input_path, export_dir, args.move_json)
 
     total_written = sum(item[1] for item in files_written)
     non_unassigned_bucket_count = sum(1 for key in bucket_lines if key[0] != "unassigned")
@@ -277,8 +390,12 @@ def main() -> int:
                 f"messages in export file = {total_in_export}",
                 f"  ...with type==message = {total_type_message}",
                 f"written to .md = {total_written}",
+                f"skipped_ignored = {skipped_ignored}",
                 f"skipped_no_text = {skipped_no_text}",
                 f"date range = {date_range}",
+                f"ignore rules loaded = {len(ignore_tokens)} ({ignore_senders_path})",
+                f"export directory = {export_dir}",
+                f"moved json = {moved_json_path if moved_json_path else 'no'}",
                 "",
                 f"topic_roots_detected = {len(topic_roots)}",
                 f"thread/topic buckets = {non_unassigned_bucket_count} (topic={topic_bucket_count}, thread={thread_bucket_count}, general={general_bucket_count})",
@@ -295,6 +412,7 @@ def main() -> int:
                 "per-file message counts:",
             ]
             + [f"  {path.name} = {count}" for path, count, _ in files_written]
+            + [""] + build_ignored_breakdown_lines(ignored_by_sender)
         )
     )
     return 0

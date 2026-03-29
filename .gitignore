@@ -12,3 +12,6 @@ __pycache__/
 
 # work in progress
 docs/
+
+# output dirs
+*2026*/

@@ -1,0 +1,12 @@
+# Add one rule per line.
+# Matching is case-insensitive substring against:
+# - from
+# - actor
+# - from_id
+# - actor_id
+#
+# Examples:
+# Community Sprints AI Marketing Bot
+# user8224852872
+#
+Bot # ignore messages from any bot 

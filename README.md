@@ -29,10 +29,13 @@
 python json_to_md.py result.json -o telegram_cleaned.md --date-format short
 ```
 
+Скрипт сохраняет результат в новую папку формата `YYYY-MM_DD-NN`, где `NN` — порядковый номер экспорта за текущий день.
+
 ### Параметры
 
 - `input` (опционально): путь к JSON (по умолчанию `result.json`)
 - `-o/--output`: путь к выходному `.md` (по умолчанию `telegram_cleaned.md`)
+  - имя файла(ов) берётся из `-o`, но сами файлы пишутся в новую папку `YYYY-MM_DD-NN`
   - для supergroup это базовое имя; скрипт создаст набор файлов вида:
     - `telegram_cleaned__topic-<id>-<slug>.md`
     - `telegram_cleaned__thread-<id>.md`
@@ -41,6 +44,17 @@ python json_to_md.py result.json -o telegram_cleaned.md --date-format short
 - `--date-format`:
   - `short` — `YYYY-MM-DD`
   - `full` — исходный timestamp из JSON (`2026-01-01T10:00:54`)
+- `--move-json`:
+  - после успешного экспорта перемещает входной JSON в созданную папку `YYYY-MM_DD-NN`
+
+### ignore_senders.txt
+
+- По умолчанию скрипт читает `ignore_senders.txt` из текущей папки.
+- Формат: одна строка = один шаблон; пустые строки и строки с `#` в начале игнорируются.
+- Сопоставление: **substring + case-insensitive**.
+  - Можно указать имя (`Community Sprints AI Marketing Bot`) или ID (`user8224852872`).
+  - Если шаблон входит в `from`/`actor`/`from_id`/`actor_id`, сообщение будет пропущено.
+- Игнорированные сообщения не попадают в `.md` и учитываются в финальной статистике (`skipped_ignored`, `ignored by sender`).
 
 Пример с полной датой:
 
@@ -64,5 +78,5 @@ python json_to_md.py result.json -o sprint.md --date-format short
 
 - Скрипт рассчитан на типичный формат Telegram Desktop export (`messages[].text` как строка или список частей).
 - Если в вашем экспорте есть другие типы/поля — можно быстро расширить `extract_text()` в `json_to_md.py`.
-- После выполнения скрипт печатает статистику: тип чата, число найденных topic roots, число assigned/unassigned сообщений, методы резолва тредов и количество сообщений по каждому выходному файлу.
+- После выполнения скрипт печатает статистику: тип чата, число найденных topic roots, число assigned/unassigned сообщений, методы резолва тредов, число проигнорированных сообщений и количество сообщений по каждому выходному файлу.
 
