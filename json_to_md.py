@@ -26,8 +26,11 @@ def extract_text(msg: dict[str, Any]) -> Optional[str]:
             if not isinstance(part, dict):
                 continue
 
-            if part.get("type") == "text_link" and part.get("text") and part.get("href"):
-                parts.append(f"[{part['text']}]({part['href']})")
+            if part.get("type") == "text_link":
+                label = part.get("text")
+                href = part.get("href")
+                if isinstance(label, str) and label.strip() and isinstance(href, str) and href.strip():
+                    parts.append(f"[{label.strip()}]({href.strip()})")
                 continue
 
             if "text" in part and isinstance(part["text"], str):
